@@ -1,0 +1,625 @@
+
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NOITE 13 - Terror 3D</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;overflow:hidden;background:#020406;color:#e8f5f2;font-family:Arial}
+#game{position:fixed;inset:0}
+canvas{display:block}
+#hud{position:fixed;inset:0;pointer-events:none;text-shadow:0 2px 8px #000}
+.top{position:absolute;top:18px;left:18px;right:18px;display:flex;justify-content:space-between;gap:12px}
+.brand{font-size:30px;font-weight:900;letter-spacing:4px;color:#d8fff4}
+.brand small{display:block;font-size:10px;color:#a4bdb8;margin-top:5px}
+.stat{background:#06100fba;border:1px solid #56877b77;border-radius:10px;padding:10px 14px;font-size:13px;line-height:1.7}
+.stat b{color:#9bffdf}
+#crosshair{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);font-size:22px}
+#message{position:absolute;left:50%;bottom:17%;transform:translateX(-50%);text-align:center;font-weight:bold;width:90%;color:#d9fff5}
+#bottom{position:absolute;bottom:18px;left:18px;right:18px;display:flex;justify-content:space-between;gap:12px;font-size:12px}
+#batteryOuter{width:140px;height:10px;border:1px solid #9ab5ad;border-radius:20px;overflow:hidden;margin-top:6px}
+#battery{height:100%;width:100%;background:linear-gradient(90deg,#56ffd0,#e7ff9c)}
+#overlay{position:fixed;inset:0;z-index:5;display:grid;place-items:center;background:radial-gradient(ellipse,#0b1919e8,#010304f7);padding:20px}
+.card{width:min(550px,100%);border:1px solid #548f80;background:#06100ff2;border-radius:18px;padding:30px;text-align:center;box-shadow:0 0 60px #2bffbf12}
+h1{font-size:clamp(36px,8vw,64px);letter-spacing:7px;margin:0;color:#eafff8}
+.subtitle{color:#9bbdb4;letter-spacing:3px;font-size:11px;margin:10px 0 24px}
+.card p{color:#c0d0cb;line-height:1.7;font-size:14px}
+button{border:1px solid #8effd7;background:#a1ffdf;color:#071411;border-radius:9px;padding:13px 22px;font-weight:900;cursor:pointer;margin-top:12px}
+.hidden{display:none!important}
+#vignette{position:fixed;inset:0;pointer-events:none;z-index:2;background:radial-gradient(ellipse,transparent 35%,#0009 100%)}
+#scare{position:fixed;inset:0;z-index:4;pointer-events:none;background:white;opacity:0}
+#touch{display:none;position:fixed;bottom:70px;left:18px;z-index:3;gap:5px}
+#touch button{margin:0;padding:14px;background:#06100fb0;color:#d8fff4;border-color:#6e9b8f}
+@media(max-width:700px){
+ .top{top:10px;left:10px;right:10px}
+ .stat{padding:7px 9px;font-size:11px}
+ #bottom{left:10px;right:10px;bottom:10px}
+ #touch{display:flex;flex-direction:column}
+}
+</style>
+</head>
+<body>
+<div id="game"></div>
+<div id="vignette"></div>
+<div id="scare"></div>
+
+<div id="hud" class="hidden">
+ <div class="top">
+  <div class="brand">NOITE 13
+   <small>VOCÊ NÃO ESTÁ SOZINHO</small>
+  </div>
+  <div class="stat">
+   CHAVES: <b id="keys">0 / 3</b><br>
+   PERIGO: <b id="danger">BAIXO</b>
+  </div>
+ </div>
+ <div id="crosshair">+</div>
+ <div id="message">Encontre 3 chaves e fuja.</div>
+ <div id="bottom">
+  <div>
+   WASD mover · Mouse olhar · Shift correr · E interagir<br>
+   <span id="objective">Encontre as chaves espalhadas pelo prédio.</span>
+  </div>
+  <div>
+   ENERGIA DA LANTERNA
+   <div id="batteryOuter"><div id="battery"></div></div>
+  </div>
+ </div>
+</div>
+
+<div id="touch" class="hidden">
+ <button data-key="w">▲</button>
+ <div style="display:flex;gap:5px">
+  <button data-key="a">◀</button>
+  <button data-key="s">▼</button>
+  <button data-key="d">▶</button>
+ </div>
+</div>
+
+<div id="overlay">
+ <div class="card">
+  <h1>NOITE 13</h1>
+  <div class="subtitle">UM JOGO DE TERROR 3D</div>
+  <p>Você acordou em um hospital abandonado. A saída está trancada. Encontre <b>3 chaves</b>, conserve a bateria da lanterna e não deixe a criatura chegar perto demais.</p>
+  <p><b>PC:</b> WASD para andar, mouse para olhar, Shift para correr, E para pegar itens.<br>
+  <b>Celular:</b> use os controles na tela e arraste o dedo para olhar.</p>
+  <button id="start">ENTRAR NO HOSPITAL</button>
+  <p style="font-size:11px;color:#718d84">É necessária uma conexão com a internet para carregar a biblioteca 3D.</p>
+ </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
+<script>
+(()=>{
+const $=id=>document.getElementById(id);
+let scene,camera,renderer,clock,player,monster,flashlight,ambient;
+let started=false,ended=false,keysFound=0,battery=100;
+let monsterSpeed=1.15,monsterDistance=100;
+let move={w:false,a:false,s:false,d:false,shift:false};
+let yaw=0,pitch=0,canLook=false,items=[],walls=[];
+let exitDoor,doorLight,stepTimer=0,gameTime=0;
+const WORLD=36,WALL=.55;
+
+function mat(color,roughness=1,emissive=0,intensity=0){
+ return new THREE.MeshStandardMaterial({
+  color,roughness,emissive,emissiveIntensity:intensity
+ });
+}
+
+function box(x,y,z,sx,sy,sz,material){
+ const o=new THREE.Mesh(new THREE.BoxGeometry(sx,sy,sz),material);
+ o.position.set(x,y,z);
+ scene.add(o);
+ return o;
+}
+
+function addWall(x,z,sx,sz){
+ const o=box(x,1.5,z,sx,3,sz,wallMat);
+ walls.push({x,z,sx,sz,obj:o});
+ return o;
+}
+
+let wallMat,floorMat;
+
+function init(){
+ scene=new THREE.Scene();
+ scene.background=new THREE.Color(0x030707);
+ scene.fog=new THREE.FogExp2(0x030707,.045);
+
+ camera=new THREE.PerspectiveCamera(
+  74,innerWidth/innerHeight,.08,100
+ );
+
+ camera.rotation.order='YXZ';
+
+ renderer=new THREE.WebGLRenderer({antialias:true});
+ renderer.setSize(innerWidth,innerHeight);
+ renderer.setPixelRatio(Math.min(devicePixelRatio,1.7));
+ renderer.shadowMap.enabled=true;
+ renderer.shadowMap.type=THREE.PCFSoftShadowMap;
+ renderer.outputColorSpace=THREE.SRGBColorSpace;
+ $('game').appendChild(renderer.domElement);
+
+ clock=new THREE.Clock();
+ wallMat=mat(0x17211f,.94);
+ floorMat=mat(0x202725,.98);
+
+ scene.add(new THREE.HemisphereLight(0x76918c,0x10110f,.38));
+
+ ambient=new THREE.PointLight(0x6d9b8c,1.0,15);
+ ambient.position.set(0,2.6,0);
+ scene.add(ambient);
+
+ const floor=box(0,-.18,0,WORLD,.35,WORLD,floorMat);
+ floor.receiveShadow=true;
+
+ // Paredes externas e corredores do hospital.
+ addWall(0,-WORLD/2,WORLD,WALL);
+ addWall(0,WORLD/2,WORLD,WALL);
+ addWall(-WORLD/2,0,WALL,WORLD);
+ addWall(WORLD/2,0,WALL,WORLD);
+
+ [
+  [-9,-10,14,.5],[8,-10,17,.5],
+  [-12,1,.5,12],[-3,-3,13,.5],
+  [10,1,.5,12],[1,7,16,.5],
+  [-8,12,12,.5],[13,12,.5,10],
+  [-4,-15,.5,6],[5,-14,.5,6],
+  [-15,7,6,.5],[15,-4,6,.5],
+  [3,2,.5,7],[-7,3,.5,6],[7,8,7,.5]
+ ].forEach(a=>addWall(...a));
+
+ // Lâmpadas com pequenas oscilações.
+ for(const [x,z] of [
+  [-13,-13],[0,-13],[13,-13],
+  [-13,0],[0,0],[13,0],
+  [-13,13],[0,13],[13,13]
+ ]){
+  box(x,2.94,z,.55,.08,.55,
+   mat(0x9fc5b8,.4,0x7cb9a4,.7));
+
+  const l=new THREE.PointLight(0x9acdb8,.75,8);
+  l.position.set(x,2.65,z);
+  l.userData.base=.75;
+  l.userData.phase=Math.random()*8;
+  scene.add(l);
+ }
+
+ // Camas e armários abandonados.
+ const metal=mat(0x343f3b);
+ const sheet=mat(0x77847d);
+ const rust=mat(0x302a24);
+
+ for(const [x,z] of [
+  [-14,-14],[3,-13],[12,4],[-13,8],[8,14]
+ ]){
+  box(x,.38,z,2.1,.5,1,metal);
+  box(x,.68,z,1.8,.12,.8,sheet);
+  box(x,.95,z-.32,.7,.35,.18,metal);
+ }
+
+ for(const [x,z] of [
+  [-5,-12],[5,-7],[14,9],[-11,14],[4,10]
+ ]){
+  box(x,.8,z,.75,1.6,.7,rust);
+  box(x,1.65,z,.78,.08,.73,metal);
+ }
+
+ // Porta verde de saída.
+ exitDoor=box(17.65,1.25,16,.25,2.5,2.2,
+  mat(0x162d29,.6,0x174d3b,.4));
+
+ doorLight=new THREE.PointLight(0x45ffb2,1.5,7);
+ doorLight.position.set(16.5,2.2,16);
+ scene.add(doorLight);
+
+ // Jogador e câmera.
+ player=new THREE.Object3D();
+ player.position.set(0,1.65,15);
+ scene.add(player);
+ player.add(camera);
+ camera.position.set(0,0,0);
+
+ // Lanterna presa à câmera.
+ flashlight=new THREE.SpotLight(
+  0xe0fff3,42,24,Math.PI/7,.38,1.5
+ );
+ flashlight.position.set(0,0,0);
+ flashlight.target.position.set(0,0,-1);
+ camera.add(flashlight);
+ camera.add(flashlight.target);
+
+ // Criatura de silhueta escura com olhos vermelhos.
+ monster=new THREE.Group();
+ scene.add(monster);
+
+ const dark=mat(0x050807,.85,0x100f0f,.2);
+ const eye=mat(0xffd7d2,.25,0xff2d22,4);
+
+ const torso=new THREE.Mesh(
+  new THREE.CapsuleGeometry(.38,.9,4,8),dark
+ );
+ torso.position.y=1.25;
+ monster.add(torso);
+
+ const head=new THREE.Mesh(
+  new THREE.SphereGeometry(.32,12,10),dark
+ );
+ head.position.y=2.05;
+ monster.add(head);
+
+ for(const x of [-.13,.13]){
+  const e=new THREE.Mesh(
+   new THREE.SphereGeometry(.055,8,8),eye
+  );
+  e.position.set(x,2.09,-.275);
+  monster.add(e);
+ }
+
+ for(const x of [-.48,.48]){
+  const arm=new THREE.Mesh(
+   new THREE.CapsuleGeometry(.12,.85,3,6),dark
+  );
+  arm.position.set(x,1.3,-.02);
+  arm.rotation.z=x*.65;
+  monster.add(arm);
+ }
+
+ for(const x of [-.2,.2]){
+  const leg=new THREE.Mesh(
+   new THREE.CapsuleGeometry(.14,.72,3,6),dark
+  );
+  leg.position.set(x,.42,0);
+  monster.add(leg);
+ }
+
+ monster.position.set(-14,0,-14);
+ monster.visible=false;
+
+ // Três chaves douradas.
+ const keyMat=mat(0xffd77b,.25,0xffa51c,1.5);
+
+ for(const [x,z] of [[-14,-4],[7,-14],[13,7]]){
+  const group=new THREE.Group();
+
+  const ring=new THREE.Mesh(
+   new THREE.TorusGeometry(.22,.065,8,18),keyMat
+  );
+  ring.rotation.x=Math.PI/2;
+  group.add(ring);
+
+  const shaft=new THREE.Mesh(
+   new THREE.CylinderGeometry(.045,.045,.48,8),keyMat
+  );
+  shaft.rotation.z=Math.PI/2;
+  shaft.position.x=.32;
+  group.add(shaft);
+
+  const glow=new THREE.PointLight(0xffb82e,1.1,3);
+  group.add(glow);
+  group.position.set(x,.7,z);
+  scene.add(group);
+  items.push({obj:group,taken:false,x,z});
+ }
+
+ // Pequenos objetos espalhados.
+ for(let i=0;i<14;i++){
+  let x=(Math.random()-.5)*28;
+  let z=(Math.random()-.5)*28;
+  if(Math.hypot(x,z)<4)continue;
+  const c=box(x,.22,z,.35,.4,.25,mat(0x303c37));
+  c.rotation.y=Math.random()*3;
+ }
+
+ window.addEventListener('resize',resize);
+
+ document.addEventListener('keydown',e=>{
+  const k=e.key.toLowerCase();
+  if(k in move)move[k]=true;
+  if(k==='shift')move.shift=true;
+  if(k==='e')interact();
+  if(['w','a','s','d',' '].includes(k))e.preventDefault();
+ });
+
+ document.addEventListener('keyup',e=>{
+  const k=e.key.toLowerCase();
+  if(k in move)move[k]=false;
+  if(k==='shift')move.shift=false;
+ });
+
+ renderer.domElement.addEventListener('click',()=>{
+  if(started&&!ended&&innerWidth>700){
+   renderer.domElement.requestPointerLock?.();
+  }
+ });
+
+ document.addEventListener('pointerlockchange',()=>{
+  canLook=document.pointerLockElement===renderer.domElement;
+ });
+
+ document.addEventListener('mousemove',e=>{
+  if(canLook){
+   yaw-=e.movementX*.0022;
+   pitch-=e.movementY*.0022;
+   pitch=Math.max(-1.2,Math.min(1.2,pitch));
+   camera.rotation.set(pitch,yaw,0);
+  }
+ });
+
+ // Controles de câmera por toque no celular.
+ let lastTouch=null;
+
+ renderer.domElement.addEventListener('touchstart',e=>{
+  if(e.touches.length){
+   lastTouch={
+    x:e.touches[0].clientX,
+    y:e.touches[0].clientY
+   };
+  }
+ },{passive:true});
+
+ renderer.domElement.addEventListener('touchmove',e=>{
+  if(lastTouch&&e.touches.length){
+   const t=e.touches[0];
+   yaw-=(t.clientX-lastTouch.x)*.005;
+   pitch-=(t.clientY-lastTouch.y)*.004;
+   pitch=Math.max(-1.1,Math.min(1.1,pitch));
+   camera.rotation.set(pitch,yaw,0);
+   lastTouch={x:t.clientX,y:t.clientY};
+  }
+ },{passive:true});
+
+ document.querySelectorAll('#touch button').forEach(b=>{
+  const k=b.dataset.key;
+
+  const on=e=>{e.preventDefault();move[k]=true};
+  const off=e=>{e.preventDefault();move[k]=false};
+
+  b.addEventListener('touchstart',on,{passive:false});
+  b.addEventListener('touchend',off,{passive:false});
+  b.addEventListener('touchcancel',off,{passive:false});
+  b.addEventListener('mousedown',on);
+  b.addEventListener('mouseup',off);
+  b.addEventListener('mouseleave',off);
+ });
+
+ animate();
+}
+
+function resize(){
+ if(!camera)return;
+ camera.aspect=innerWidth/innerHeight;
+ camera.updateProjectionMatrix();
+ renderer.setSize(innerWidth,innerHeight);
+}
+
+function blocked(x,z){
+ const r=.38;
+
+ for(const w of walls){
+  if(
+   x>w.x-w.sx/2-r&&x<w.x+w.sx/2+r&&
+   z>w.z-w.sz/2-r&&z<w.z+w.sz/2+r
+  )return true;
+ }
+ return false;
+}
+
+function interact(){
+ if(!started||ended)return;
+
+ let nearest=null,dist=2.0;
+
+ for(const it of items){
+  if(it.taken)continue;
+  const d=Math.hypot(
+   player.position.x-it.x,
+   player.position.z-it.z
+  );
+  if(d<dist){nearest=it;dist=d}
+ }
+
+ if(nearest){
+  nearest.taken=true;
+  scene.remove(nearest.obj);
+  keysFound++;
+  $('keys').textContent=keysFound+' / 3';
+  say('Você pegou uma chave. O barulho ecoou pelo hospital…');
+  monsterSpeed+=.25;
+
+  if(keysFound===1){
+   monster.visible=true;
+   monster.position.set(-14,0,-14);
+  }
+
+  if(keysFound===3){
+   say('Todas as chaves! Chegue à porta verde e pressione E.');
+  }
+  return;
+ }
+
+ if(Math.hypot(
+  player.position.x-17,
+  player.position.z-16
+ )<3){
+  if(keysFound>=3)win();
+  else say('A porta está trancada. Faltam '+(3-keysFound)+' chave(s).');
+  return;
+ }
+
+ say('Nada ao alcance. Procure por objetos dourados.');
+}
+
+function say(text){$('message').textContent=text}
+
+function win(){
+ ended=true;
+ document.exitPointerLock?.();
+
+ $('overlay').classList.remove('hidden');
+ $('overlay').innerHTML=`
+ <div class="card">
+  <h1>VOCÊ ESCAPOU</h1>
+  <div class="subtitle">O SOL ESTÁ NASCENDO</div>
+  <p>Você saiu do hospital com 3 chaves. Mas, lá atrás, alguma coisa ainda está observando…</p>
+  <button onclick="location.reload()">JOGAR NOVAMENTE</button>
+ </div>`;
+}
+
+function lose(){
+ ended=true;
+ document.exitPointerLock?.();
+ $('scare').style.opacity='1';
+
+ setTimeout(()=>$('scare').style.opacity='0',120);
+
+ $('overlay').classList.remove('hidden');
+ $('overlay').innerHTML=`
+ <div class="card">
+  <h1>TE ENCONTROU</h1>
+  <div class="subtitle">FIM DE JOGO</div>
+  <p>Você ouviu os passos, mas não foi rápido o bastante.</p>
+  <button onclick="location.reload()">TENTAR DE NOVO</button>
+ </div>`;
+}
+
+function update(dt){
+ if(!started||ended)return;
+ gameTime+=dt;
+
+ const speed=move.shift?5.5:3.25;
+ let dx=0,dz=0;
+
+ if(move.w)dz-=1;
+ if(move.s)dz+=1;
+ if(move.a)dx-=1;
+ if(move.d)dx+=1;
+
+ if(dx||dz){
+  const len=Math.hypot(dx,dz);
+  dx/=len;dz/=len;
+
+  const sin=Math.sin(yaw),cos=Math.cos(yaw);
+  const vx=(dx*cos+dz*sin)*speed*dt;
+  const vz=(-dx*sin+dz*cos)*speed*dt;
+
+  const nx=player.position.x+vx;
+  const nz=player.position.z+vz;
+
+  if(!blocked(nx,player.position.z))player.position.x=nx;
+  if(!blocked(player.position.x,nz))player.position.z=nz;
+
+  stepTimer-=dt;
+  if(stepTimer<=0)stepTimer=move.shift?.24:.42;
+ }
+
+ player.position.x=Math.max(-17,Math.min(17,player.position.x));
+ player.position.z=Math.max(-17,Math.min(17,player.position.z));
+
+ // A bateria acaba gradualmente.
+ battery=Math.max(0,battery-dt*.38);
+ flashlight.intensity=battery>0?42*(.22+.78*battery/100):2.5;
+ $('battery').style.width=battery+'%';
+
+ // Lâmpadas tremeluzem.
+ scene.children.forEach(o=>{
+  if(o.isPointLight&&o.userData.phase!==undefined){
+   o.intensity=o.userData.base*(
+    .75+Math.random()*.25+
+    (Math.sin(gameTime*3+o.userData.phase)>.97?.5:0)
+   );
+  }
+ });
+
+ // A criatura começa a perseguir depois da primeira chave.
+ if(monster.visible){
+  const dxp=player.position.x-monster.position.x;
+  const dzp=player.position.z-monster.position.z;
+
+  monsterDistance=Math.hypot(dxp,dzp);
+  const mSpeed=monsterSpeed*(move.shift?1.05:1);
+
+  if(monsterDistance>1.25){
+   const vx=dxp/Math.max(monsterDistance,.01)*mSpeed*dt;
+   const vz=dzp/Math.max(monsterDistance,.01)*mSpeed*dt;
+
+   let nx=monster.position.x+vx;
+   let nz=monster.position.z+vz;
+
+   if(!blocked(nx,monster.position.z))monster.position.x=nx;
+   else monster.position.x+=Math.sign(
+    player.position.x-monster.position.x
+   )*dt*.45;
+
+   if(!blocked(monster.position.x,nz))monster.position.z=nz;
+   else monster.position.z+=Math.sign(
+    player.position.z-monster.position.z
+   )*dt*.45;
+  }
+
+  monster.lookAt(player.position.x,0,player.position.z);
+
+  const close=Math.max(0,1-monsterDistance/12);
+
+  $('danger').textContent=
+   monsterDistance<4?'CRÍTICO':
+   monsterDistance<9?'ALTO':'MÉDIO';
+
+  $('danger').style.color=
+   monsterDistance<5?'#ff7b8c':'#9bffdf';
+
+  scene.fog.density=.045+close*.035;
+  ambient.intensity=.65-close*.35;
+
+  if(monsterDistance<1.35){lose();return}
+
+  if(monsterDistance<6&&Math.random()<dt*.4){
+   $('message').textContent='Você ouve uma respiração muito perto…';
+  }
+ }else{
+  $('danger').textContent='BAIXO';
+  scene.fog.density=.045;
+ }
+
+ // Chaves flutuam e brilham.
+ items.forEach(it=>{
+  if(!it.taken){
+   it.obj.rotation.y+=dt*1.3;
+   it.obj.position.y=.72+Math.sin(gameTime*2+it.x)*.12;
+  }
+ });
+
+ doorLight.intensity=1.1+Math.sin(gameTime*3)*.35;
+}
+
+function animate(){
+ requestAnimationFrame(animate);
+ const dt=Math.min(clock.getDelta(),.04);
+ update(dt);
+ if(renderer)renderer.render(scene,camera);
+}
+
+$('start').addEventListener('click',()=>{
+ if(!window.THREE){
+  alert('Não foi possível carregar o motor 3D. Confira sua conexão com a internet e recarregue.');
+  return;
+ }
+
+ init();
+ started=true;
+ $('overlay').classList.add('hidden');
+ $('hud').classList.remove('hidden');
+ $('touch').classList.remove('hidden');
+
+ say('Encontre 3 chaves douradas. A porta de saída está marcada em verde.');
+
+ if(innerWidth>700){
+  renderer.domElement.requestPointerLock?.();
+ }
+});
+})();
+</script>
+</body>
+</html>
